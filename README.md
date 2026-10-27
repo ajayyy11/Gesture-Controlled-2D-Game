@@ -1,5 +1,7 @@
 # Gesture-Controlled 2D Game
 
+![Python CI](https://github.com/ajayyy11/Gesture-Controlled-2D-Game/actions/workflows/ci.yml/badge.svg)
+
 A Python 2D game that combines Pygame gameplay with camera-based hand tracking and gesture recognition. The project explores touch-free interaction using computer vision.
 
 ## Features
