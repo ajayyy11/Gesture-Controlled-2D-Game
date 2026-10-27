@@ -81,6 +81,10 @@ Allow camera access when prompted. If the camera is unavailable, check operating
 - Generated Python cache files should not be committed.
 - Test camera initialization and gesture handling on the target operating system.
 
+## Validation
+
+GitHub Actions performs a Python syntax/bytecode compilation check on pushes and pull requests. This is a fast static check; it does not verify webcam availability, real-time gesture accuracy, audio, or complete gameplay. Test those features locally on a machine with the required dependencies, model file, and camera.
+
 ## Author
 
 Ajay Shanmuga Sundaram
