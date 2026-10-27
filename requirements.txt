@@ -1,6 +1,6 @@
 # Keep NumPy in the supported range shared by MediaPipe and OpenCV.
 numpy==2.2.6
 mediapipe==0.10.32
-opencv-contrib-python==4.13.0.92
+opencv-contrib-python==5.0.0.93
 pygame==2.6.1
 sounddevice==0.5.5
