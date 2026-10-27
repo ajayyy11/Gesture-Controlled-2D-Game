@@ -1,209 +1,253 @@
-import pygame
-import random
 import json
+import random
+from pathlib import Path
+
+import cv2
+import pygame
+
 from hand_control import HandTracker
 from menu import animated_menu
-import cv2
 
-pygame.init()
-pygame.mixer.init()
+BASE_DIR = Path(__file__).resolve().parent
 
-# ================= DISPLAY =================
-screen = pygame.display.set_mode((1280, 720), pygame.RESIZABLE)
-WIDTH, HEIGHT = screen.get_size()
-pygame.display.set_caption("Gesture Controlled Game - LEGEND MODE")
-clock = pygame.time.Clock()
 
-# ================= ASSETS =================
-plane_img = pygame.image.load("assets/plane4.png")
-plane_img = pygame.transform.scale(plane_img, (80, 80))
-enemy_img = pygame.image.load("assets/enemy.png")
-enemy_img = pygame.transform.scale(enemy_img, (70, 70))
-background = pygame.image.load("assets/background.png")
-background = pygame.transform.scale(background, (WIDTH, HEIGHT))
+def load_image(filename, size):
+    image_path = BASE_DIR / "assets" / filename
+    return pygame.transform.scale(pygame.image.load(str(image_path)), size)
 
-shoot_sound = pygame.mixer.Sound("assets/shoot.wav")
-explode_sound = pygame.mixer.Sound("assets/explosion.wav")
-pygame.mixer.music.load("assets/music.mp3")
-pygame.mixer.music.play(-1)
-font = pygame.font.SysFont("Arial", 28)
 
-# ================= GAME VARIABLES =================
-plane_x, plane_y = WIDTH//2, HEIGHT - 120
-bullets, enemy_bullets, enemies = [], [], []
-particles = []
-score, combo, player_health = 0, 0, 5
-shield_timer, ultimate_charge = 0, 0
-boss_mode, game_over = False, False
-stars = [[random.randint(0, WIDTH), random.randint(0, HEIGHT), random.randint(1,3)] for _ in range(80)]
+def main():
+    pygame.init()
+    try:
+        pygame.mixer.init()
+    except pygame.error:
+        # Continue silently if the machine has no usable audio device.
+        pass
 
-# ================= HIGH SCORE =================
-try:
-    with open("highscore.json","r") as f:
-        high_score = json.load(f)["highscore"]
-except:
-    high_score = 0
+    screen = pygame.display.set_mode((1280, 720), pygame.RESIZABLE)
+    width, height = screen.get_size()
+    pygame.display.set_caption("Gesture Controlled Game - LEGEND MODE")
+    clock = pygame.time.Clock()
 
-# ================= HAND TRACKER =================
-tracker = HandTracker()
-animated_menu()
+    plane_img = load_image("plane4.png", (80, 80))
+    enemy_img = load_image("enemy.png", (70, 70))
+    background = pygame.transform.scale(
+        pygame.image.load(str(BASE_DIR / "assets" / "background.png")), (width, height)
+    )
 
-# ================= FUNCTIONS =================
-def spawn_enemy():
-    x = random.randint(0, WIDTH - 70)
-    enemies.append([x, -70, random.randint(3,6)])
+    def load_sound(filename):
+        try:
+            return pygame.mixer.Sound(str(BASE_DIR / "assets" / filename))
+        except pygame.error:
+            return None
 
-def spawn_boss():
-    global boss_mode
-    boss_mode = True
-    enemies.append([WIDTH//2 - 100, -150, 2, 60])
+    shoot_sound = load_sound("shoot.wav")
+    explode_sound = load_sound("explosion.wav")
+    music_path = BASE_DIR / "assets" / "music.mp3"
+    if pygame.mixer.get_init() and music_path.is_file():
+        try:
+            pygame.mixer.music.load(str(music_path))
+            pygame.mixer.music.play(-1)
+        except pygame.error:
+            pass
 
-def draw_stars():
-    for star in stars:
-        pygame.draw.circle(screen, (255,255,255), (star[0], star[1]), star[2])
-        star[1] += 2
-        if star[1] > HEIGHT:
-            star[1] = 0
-            star[0] = random.randint(0, WIDTH)
+    font = pygame.font.SysFont("Arial", 28)
+    plane_x, plane_y = width // 2, height - 120
+    bullets, enemy_bullets, enemies, particles = [], [], [], []
+    score, combo, player_health = 0, 0, 5
+    shield_timer, ultimate_charge = 0, 0
+    boss_mode, game_over = False, False
+    stars = [[random.randint(0, width), random.randint(0, height), random.randint(1, 3)] for _ in range(80)]
 
-def draw_ui(gesture):
-    screen.blit(font.render(f"Score: {score}", True, (255,255,255)), (10, 10))
-    screen.blit(font.render(f"Combo: {combo}", True, (255,200,0)), (10, 40))
-    screen.blit(font.render(f"HP: {player_health}", True, (255,100,100)), (10, 70))
-    screen.blit(font.render(f"High Score: {high_score}", True, (200,200,200)), (10, 100))
-    pygame.draw.rect(screen, (50,50,50), (10, 140, 200, 20))
-    pygame.draw.rect(screen, (0,255,255), (10, 140, 2*ultimate_charge, 20))
-    if gesture:
-        screen.blit(font.render(f"Gesture: {gesture}", True, (0,255,0)), (WIDTH-250, 10))
+    highscore_path = BASE_DIR / "highscore.json"
+    try:
+        high_score = int(json.loads(highscore_path.read_text(encoding="utf-8")).get("highscore", 0))
+        high_score = max(0, high_score)
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        high_score = 0
 
-# ================= PARTICLES =================
-def spawn_particles(x, y, color=(255,200,0), count=15):
-    for _ in range(count):
-        particles.append([x, y, random.uniform(-2,2), random.uniform(-2,2), random.randint(3,6), color])
+    tracker = None
+    try:
+        tracker = HandTracker()
+        animated_menu()
+        running, spawn_timer = True, 0
 
-def update_particles():
-    for p in particles[:]:
-        p[0] += p[2]
-        p[1] += p[3]
-        p[4] -= 0.2
-        if p[4] <=0: particles.remove(p)
-        else: pygame.draw.circle(screen, p[5], (int(p[0]), int(p[1])), int(p[4]))
+        def spawn_enemy():
+            enemies.append([random.randint(0, width - 70), -70, random.randint(3, 6)])
 
-# ================= MAIN LOOP =================
-running, spawn_timer = True, 0
+        def spawn_boss():
+            nonlocal boss_mode
+            boss_mode = True
+            enemies.append([width // 2 - 100, -150, 2, 60])
 
-while running:
-    clock.tick(60)
-    screen.blit(background, (0,0))
-    draw_stars()
-    update_particles()
+        def spawn_particles(x, y, color=(255, 200, 0), count=15):
+            for _ in range(count):
+                particles.append([x, y, random.uniform(-2, 2), random.uniform(-2, 2), random.randint(3, 6), color])
 
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT: running = False
-        if event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_f: pygame.display.toggle_fullscreen()
+        def play_sound(sound):
+            if sound is not None:
+                sound.play()
 
-    if game_over:
-        over_text = font.render("GAME OVER - Press R to Restart", True, (255,0,0))
-        screen.blit(over_text, (WIDTH//2-200, HEIGHT//2))
-        if pygame.key.get_pressed()[pygame.K_r]:
-            pygame.quit()
-            exit()
-        pygame.display.update()
-        continue
+        while running:
+            clock.tick(60)
+            screen.blit(background, (0, 0))
 
-    # ================= HAND INPUT =================
-    hand_data = tracker.get_hand_data()
-    gesture = None
-    if hand_data:
-        plane_x = hand_data["x"]
-        gesture = hand_data["gesture"]
-        color = hand_data["color"]
+            for star in stars:
+                pygame.draw.circle(screen, (255, 255, 255), (star[0], star[1]), star[2])
+                star[1] += 2
+                if star[1] > height:
+                    star[1] = 0
+                    star[0] = random.randint(0, width)
 
-        if gesture == "pinch":
-            bullets.append([plane_x+35, plane_y, []])  # store trail
-            shoot_sound.play()
-        elif gesture == "fist" and ultimate_charge >= 100:
-            bullets.append(["ULTIMATE"])
-            ultimate_charge = 0
-        elif gesture == "open":
-            shield_timer = 120
+            for particle in particles[:]:
+                particle[0] += particle[2]
+                particle[1] += particle[3]
+                particle[4] -= 0.2
+                if particle[4] <= 0:
+                    particles.remove(particle)
+                else:
+                    pygame.draw.circle(screen, particle[5], (int(particle[0]), int(particle[1])), max(1, int(particle[4])))
 
-    # ================= SPAWN =================
-    spawn_timer += 1
-    if spawn_timer > 40: spawn_enemy(); spawn_timer=0
-    if score > 120 and not boss_mode: spawn_boss()
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    running = False
+                elif event.type == pygame.KEYDOWN and event.key == pygame.K_f:
+                    pygame.display.toggle_fullscreen()
 
-    plane_rect = pygame.Rect(plane_x, plane_y, 80, 80)
+            if game_over:
+                over_text = font.render("GAME OVER - Press R to Quit", True, (255, 0, 0))
+                screen.blit(over_text, (width // 2 - 200, height // 2))
+                if pygame.key.get_pressed()[pygame.K_r]:
+                    running = False
+                pygame.display.update()
+                continue
 
-    # ================= MOVE ENEMIES =================
-    for e in enemies[:]:
-        if len(e)==3: e[1]+=e[2]; screen.blit(enemy_img,(e[0],e[1]))
-        else: e[1]+=e[2]; pygame.draw.rect(screen,(200,0,200),(e[0],e[1],200,120))
-        if e[1] > HEIGHT: enemies.remove(e)
-        if random.randint(0,100)<2: enemy_bullets.append([e[0]+35,e[1]+70])
+            hand_data = tracker.get_hand_data()
+            gesture = None
+            if hand_data:
+                plane_x = max(0, min(width - 80, hand_data["x"]))
+                gesture = hand_data["gesture"]
+                if gesture == "pinch":
+                    bullets.append([plane_x + 35, plane_y, []])
+                    play_sound(shoot_sound)
+                elif gesture == "fist" and ultimate_charge >= 100:
+                    bullets.append(["ULTIMATE"])
+                    ultimate_charge = 0
+                elif gesture == "open":
+                    shield_timer = 120
 
-    # ================= MOVE BULLETS =================
-    for b in bullets[:]:
-        if b==["ULTIMATE"]: pygame.draw.rect(screen,(0,255,255),(0,0,WIDTH,HEIGHT)); enemies.clear(); combo+=10; bullets.remove(b); continue
-        # Bullet trail
-        trail = b[2]
-        trail.append((b[0]+3,b[1]+10))
-        if len(trail)>5: trail.pop(0)
-        for t in trail: pygame.draw.circle(screen,(255,255,0), t, 3)
-        b[1]-=10
-        pygame.draw.rect(screen,(255,255,0),(b[0],b[1],6,20))
-        if b[1]<0: bullets.remove(b)
+            spawn_timer += 1
+            if spawn_timer > 40:
+                spawn_enemy()
+                spawn_timer = 0
+            if score > 120 and not boss_mode:
+                spawn_boss()
 
-    # ================= ENEMY BULLETS =================
-    for eb in enemy_bullets[:]:
-        eb[1]+=8
-        pygame.draw.rect(screen,(255,0,0),(eb[0],eb[1],6,20))
-        if eb[1]>HEIGHT: enemy_bullets.remove(eb)
-        if pygame.Rect(eb[0],eb[1],6,20).colliderect(plane_rect):
-            if shield_timer<=0: player_health-=1
-            enemy_bullets.remove(eb)
+            plane_rect = pygame.Rect(plane_x, plane_y, 80, 80)
 
-    # ================= COLLISION =================
-    for e in enemies[:]:
-        enemy_rect = pygame.Rect(e[0],e[1],70,70)
-        for b in bullets[:]:
-            if b!=["ULTIMATE"]:
-                bullet_rect = pygame.Rect(b[0],b[1],6,20)
-                if bullet_rect.colliderect(enemy_rect):
-                    bullets.remove(b)
-                    spawn_particles(e[0]+35,e[1]+35)
-                    explode_sound.play()
-                    if len(e)==4: e[3]-=5; 
-                    if len(e)==4 and e[3]<=0: enemies.remove(e); score+=50
-                    if len(e)==3: enemies.remove(e); score+=10; combo+=1; ultimate_charge+=5
-        if enemy_rect.colliderect(plane_rect):
-            if shield_timer<=0: player_health-=1
-            enemies.remove(e)
+            for enemy in enemies[:]:
+                if len(enemy) == 3:
+                    enemy[1] += enemy[2]
+                    screen.blit(enemy_img, (enemy[0], enemy[1]))
+                else:
+                    enemy[1] += enemy[2]
+                    pygame.draw.rect(screen, (200, 0, 200), (enemy[0], enemy[1], 200, 120))
+                if enemy[1] > height and enemy in enemies:
+                    enemies.remove(enemy)
+                    continue
+                if random.randint(0, 100) < 2:
+                    enemy_bullets.append([enemy[0] + 35, enemy[1] + 70])
 
-    # ================= DRAW PLAYER =================
-    screen.blit(plane_img,(plane_x,plane_y))
-    if shield_timer>0: shield_timer-=1; pygame.draw.circle(screen,(0,255,255),(plane_x+40,plane_y+40),60,3)
+            for bullet in bullets[:]:
+                if bullet == ["ULTIMATE"]:
+                    pygame.draw.rect(screen, (0, 255, 255), (0, 0, width, height))
+                    enemies.clear()
+                    combo += 10
+                    bullets.remove(bullet)
+                    continue
+                trail = bullet[2]
+                trail.append((bullet[0] + 3, bullet[1] + 10))
+                if len(trail) > 5:
+                    trail.pop(0)
+                for point in trail:
+                    pygame.draw.circle(screen, (255, 255, 0), point, 3)
+                bullet[1] -= 10
+                pygame.draw.rect(screen, (255, 255, 0), (bullet[0], bullet[1], 6, 20))
+                if bullet[1] < 0:
+                    bullets.remove(bullet)
 
-    draw_ui(gesture)
+            for enemy_bullet in enemy_bullets[:]:
+                enemy_bullet[1] += 8
+                pygame.draw.rect(screen, (255, 0, 0), (enemy_bullet[0], enemy_bullet[1], 6, 20))
+                if enemy_bullet[1] > height:
+                    enemy_bullets.remove(enemy_bullet)
+                    continue
+                if pygame.Rect(enemy_bullet[0], enemy_bullet[1], 6, 20).colliderect(plane_rect):
+                    if shield_timer <= 0:
+                        player_health -= 1
+                    enemy_bullets.remove(enemy_bullet)
 
-    # ================= MINI CAMERA =================
-    cam_frame = tracker.get_frame()
-    if cam_frame is not None:
-        cam_frame = cv2.cvtColor(cam_frame, cv2.COLOR_BGR2RGB)
-        cam_frame = cv2.flip(cam_frame, 1)
-        cam_surface = pygame.surfarray.make_surface(cam_frame.swapaxes(0,1))
-        mini_cam = pygame.transform.scale(cam_surface, (220,160))
-        screen.blit(mini_cam, (10,10))
-        pygame.draw.rect(screen,(255,255,255),(10,10,220,160),2)
+            for enemy in enemies[:]:
+                enemy_rect = pygame.Rect(enemy[0], enemy[1], 70, 70)
+                for bullet in bullets[:]:
+                    if bullet == ["ULTIMATE"]:
+                        continue
+                    bullet_rect = pygame.Rect(bullet[0], bullet[1], 6, 20)
+                    if bullet_rect.colliderect(enemy_rect):
+                        if bullet in bullets:
+                            bullets.remove(bullet)
+                        spawn_particles(enemy[0] + 35, enemy[1] + 35)
+                        play_sound(explode_sound)
+                        if len(enemy) == 4:
+                            enemy[3] -= 5
+                            if enemy[3] <= 0 and enemy in enemies:
+                                enemies.remove(enemy)
+                                score += 50
+                        elif enemy in enemies:
+                            enemies.remove(enemy)
+                            score += 10
+                            combo += 1
+                            ultimate_charge = min(100, ultimate_charge + 5)
+                        break
+                if enemy in enemies and enemy_rect.colliderect(plane_rect):
+                    if shield_timer <= 0:
+                        player_health -= 1
+                    enemies.remove(enemy)
 
-    # ================= GAME OVER CHECK =================
-    if player_health<=0:
-        game_over=True
-        if score>high_score: high_score=score; 
-        with open("highscore.json","w") as f: json.dump({"highscore":high_score},f)
+            screen.blit(plane_img, (plane_x, plane_y))
+            if shield_timer > 0:
+                shield_timer -= 1
+                pygame.draw.circle(screen, (0, 255, 255), (plane_x + 40, plane_y + 40), 60, 3)
 
-    pygame.display.update()
+            screen.blit(font.render(f"Score: {score}", True, (255, 255, 255)), (10, 10))
+            screen.blit(font.render(f"Combo: {combo}", True, (255, 200, 0)), (10, 40))
+            screen.blit(font.render(f"HP: {player_health}", True, (255, 100, 100)), (10, 70))
+            screen.blit(font.render(f"High Score: {high_score}", True, (200, 200, 200)), (10, 100))
+            pygame.draw.rect(screen, (50, 50, 50), (10, 140, 200, 20))
+            pygame.draw.rect(screen, (0, 255, 255), (10, 140, 2 * ultimate_charge, 20))
+            if gesture:
+                screen.blit(font.render(f"Gesture: {gesture}", True, (0, 255, 0)), (width - 250, 10))
 
-tracker.release()
-pygame.quit()
+            cam_frame = tracker.get_frame()
+            if cam_frame is not None:
+                cam_frame = cv2.cvtColor(cam_frame, cv2.COLOR_BGR2RGB)
+                cam_frame = cv2.flip(cam_frame, 1)
+                cam_surface = pygame.surfarray.make_surface(cam_frame.swapaxes(0, 1))
+                screen.blit(pygame.transform.scale(cam_surface, (220, 160)), (10, 10))
+                pygame.draw.rect(screen, (255, 255, 255), (10, 10, 220, 160), 2)
+
+            if player_health <= 0:
+                game_over = True
+                if score > high_score:
+                    high_score = score
+                    highscore_path.write_text(json.dumps({"highscore": high_score}), encoding="utf-8")
+
+            pygame.display.update()
+    finally:
+        if tracker is not None:
+            tracker.release()
+        pygame.quit()
+
+
+if __name__ == "__main__":
+    main()
