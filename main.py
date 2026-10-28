@@ -69,7 +69,8 @@ def main():
     tracker = None
     try:
         tracker = HandTracker()
-        animated_menu()
+        if not animated_menu():
+            return
         running, spawn_timer = True, 0
 
         def spawn_enemy():
